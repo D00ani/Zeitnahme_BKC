@@ -183,8 +183,9 @@ class Tagesuebersicht(tk.Toplevel):
                                  strafzeit=str(strafe), gesamtzeit=gesamt)
         nachgezogen = ""
         if eintrag["laufnr"] in (db_modul.LAUF_1, db_modul.LAUF_2):
-            if self._gesamt_nachziehen(eintrag):
-                nachgezogen = " Das Gesamtergebnis wurde mit nachgezogen."
+            erfolg, hinweis = self._gesamt_nachziehen(eintrag)
+            nachgezogen = (" Das Gesamtergebnis wurde mit nachgezogen."
+                           if erfolg else f" ACHTUNG: {hinweis}")
 
         self.laden()
         self.liste.selection_set(str(kennung))
@@ -194,8 +195,14 @@ class Tagesuebersicht(tk.Toplevel):
         self.bei_aenderung()
 
     def _gesamt_nachziehen(self, eintrag):
-        """Rechnet das Gesamtergebnis desselben Fahrers neu aus den beiden
-        Einzelläufen - sonst passt es nach einer Berichtigung nicht mehr."""
+        """Rechnet das Gesamtergebnis desselben Fahrers neu aus den
+        Einzelläufen - sonst passt es nach einer Berichtigung nicht mehr.
+
+        Gibt (erfolg, hinweis) zurück. Nachgezogen wird **nur**, wenn alle
+        erwarteten Wertungsläufe vorhanden sind. Fehlt einer - etwa weil er
+        gelöscht wurde - bliebe sonst eine zu kurze Gesamtzeit stehen, ohne
+        dass es jemand merkt.
+        """
         schluessel = (eintrag["starternr"], eintrag["name"], eintrag["klasse"])
         laeufe, gesamtsatz = {}, None
         for kandidat in self.db.ergebnisse(self.datum):
@@ -206,8 +213,17 @@ class Tagesuebersicht(tk.Toplevel):
                 laeufe[kandidat["laufnr"]] = kandidat      # der jüngste gewinnt
             elif kandidat["laufnr"] == db_modul.LAUF_GESAMT:
                 gesamtsatz = kandidat
-        if gesamtsatz is None or not laeufe:
-            return False
+        if gesamtsatz is None:
+            return False, "Für diesen Starter gibt es kein Gesamtergebnis."
+
+        erwartet = {n for n in (db_modul.LAUF_1, db_modul.LAUF_2)
+                    if n <= int(self.einst.we_anzahl_laeufe)}
+        fehlend = sorted(erwartet - set(laeufe))
+        if fehlend:
+            return False, (f"Das Gesamtergebnis wurde NICHT angepasst - es "
+                           f"fehlt der {fehlend[0]}. Wertungslauf. Bitte den "
+                           f"Starter neu fahren lassen oder das "
+                           f"Gesamtergebnis löschen.")
 
         fahrzeit = sum(zeit.parse(l["fahrzeit"]) or 0 for l in laeufe.values())
         pylonen = sum(self._zahl(l["pylonen"]) for l in laeufe.values())
@@ -219,7 +235,7 @@ class Tagesuebersicht(tk.Toplevel):
             gesamtsatz["id"], fahrzeit=zeit.formatiere(fahrzeit),
             pylonen=str(pylonen), adw=str(fehler), strafzeit=str(strafe),
             gesamtzeit=gesamt)
-        return True
+        return True, ""
 
     def _loeschen(self):
         kennung = self._auswahl()

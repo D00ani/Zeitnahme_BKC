@@ -128,16 +128,18 @@ class Starterfenster(tk.Toplevel):
         self.meldung.pack(fill="x", pady=(8, 0))
 
     def _baue_lauf_zeile(self, elternteil, zeile, nummer):
-        felder = {}
-        ttk.Label(elternteil, text=f"{nummer}. Lauf",
-                  font=stil.SCHRIFT_FETT).grid(row=zeile, column=0, padx=6,
-                                               pady=3, sticky="w")
+        felder = {"anzeigen": []}
+        beschriftung = ttk.Label(elternteil, text=f"{nummer}. Lauf",
+                                 font=stil.SCHRIFT_FETT)
+        beschriftung.grid(row=zeile, column=0, padx=6, pady=3, sticky="w")
+        felder["anzeigen"].append(beschriftung)
 
         felder["gueltig"] = tk.BooleanVar(value=True)
         knopf = ttk.Checkbutton(elternteil, variable=felder["gueltig"],
                                 command=self._gueltigkeit_geaendert)
         knopf.grid(row=zeile, column=1, padx=6, pady=3)
         felder["gueltig_knopf"] = knopf
+        felder["anzeigen"].append(knopf)
 
         for spalte, name, breite in ((2, "pylonen", 6), (3, "fehler", 6)):
             var = tk.StringVar(value="0")
@@ -147,13 +149,15 @@ class Starterfenster(tk.Toplevel):
             var.trace_add("write", lambda *_: self._nachrechnen())
             felder[name] = var
             felder[name + "_feld"] = feld
+            felder["anzeigen"].append(feld)
 
         for spalte, name in ((4, "zeit"), (5, "strafzeit"), (6, "summe")):
             var = tk.StringVar(value=zeit.NULLZEIT if name != "strafzeit" else "0")
-            ttk.Label(elternteil, textvariable=var,
-                      font=stil.SCHRIFT_TABELLE).grid(row=zeile, column=spalte,
-                                                      padx=6, pady=3, sticky="w")
+            anzeige = ttk.Label(elternteil, textvariable=var,
+                                font=stil.SCHRIFT_TABELLE)
+            anzeige.grid(row=zeile, column=spalte, padx=6, pady=3, sticky="w")
             felder[name] = var
+            felder["anzeigen"].append(anzeige)
         return felder
 
     # ------------------------------------------------------------------
@@ -207,8 +211,17 @@ class Starterfenster(tk.Toplevel):
         ende = self.zustand == ENDE
         drucken_moeglich = ende and bool(self.einst.ergebnis_drucken)
 
+        # Wird nur ein Wertungslauf gefahren, hat die zweite Zeile nichts
+        # zu suchen - sonst rätselt man, warum sie sich nicht ausfüllen lässt.
+        laeufe = int(self.einst.we_anzahl_laeufe)
         for nummer in (1, 2):
             zeile = self.zeilen[nummer]
+            for element in zeile["anzeigen"]:
+                if nummer <= laeufe:
+                    element.grid()
+                else:
+                    element.grid_remove()
+
             aktiv = (not erfassen) and (
                 nummer == 1 if self.zustand == LAUF1 else nummer == 2)
             zustand = "normal" if aktiv else "disabled"

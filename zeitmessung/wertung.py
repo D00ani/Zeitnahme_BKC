@@ -132,13 +132,16 @@ def rangliste(eintraege):
     """
     sortiert = sorted(eintraege, key=_sortierschluessel)
     ergebnis = []
-    letzte_zeit = object()
+    nichts = object()          # Merker, der mit keiner Zeit gleich sein kann
+    letzte_zeit = nichts
     letzter_platz = 0
     for stelle, eintrag in enumerate(sortiert, start=1):
         hundertstel = eintrag.get("gesamtzeit_hs")
         if hundertstel is None:
             hundertstel = zeit.parse(eintrag.get("gesamtzeit", ""))
-        if hundertstel is not None and hundertstel == letzte_zeit:
+        # None == None ist wahr: auch Starter ohne verwertbare Zeit teilen
+        # sich einen Platz. Sie unterscheidet ja nichts voneinander.
+        if letzte_zeit is not nichts and hundertstel == letzte_zeit:
             platz = letzter_platz
         else:
             platz = stelle

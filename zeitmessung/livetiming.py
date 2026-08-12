@@ -217,11 +217,36 @@ def archiviere(archiv_ordner, daten):
 _OHNE_FENSTER = {"creationflags": 0x08000000} if sys.platform.startswith("win") else {}
 
 
-def _git(argumente, ordner, umgebung=None):
-    return subprocess.run(["git"] + argumente, cwd=ordner, env=umgebung,
-                          capture_output=True, text=True,
-                          encoding="utf-8", errors="replace",
-                          **_OHNE_FENSTER)
+# Obergrenze je Git-Aufruf. Am Streckenrand hängt der Laptop am Handy; ohne
+# Netz kann ein Push sonst minutenlang in Namensauflösung und Zeitüberschreitungen
+# stehen. Lieber eine ehrliche Fehlermeldung als endloses Warten.
+_GIT_GEDULD = 90
+
+
+class _Abgelaufen:
+    """Sieht aus wie ein fehlgeschlagener Git-Aufruf."""
+    returncode = 1
+    stdout = ""
+
+    def __init__(self, sekunden):
+        self.stderr = (f"Git hat nach {sekunden} Sekunden nicht geantwortet - "
+                       f"vermutlich ist gerade kein Netz da.")
+
+
+def _git(argumente, ordner, umgebung=None, geduld=_GIT_GEDULD):
+    try:
+        return subprocess.run(["git"] + argumente, cwd=ordner, env=umgebung,
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              timeout=geduld, **_OHNE_FENSTER)
+    except subprocess.TimeoutExpired:
+        return _Abgelaufen(geduld)
+    except OSError as fehler:
+        class _Fehlt:
+            returncode = 1
+            stdout = ""
+            stderr = f"Git lässt sich nicht aufrufen: {fehler}"
+        return _Fehlt()
 
 
 def _branch(ordner):
@@ -255,9 +280,16 @@ def veroeffentliche(einstellungen, nachricht, pfade):
         if not pfad:
             continue
         try:
-            relativ.append(os.path.relpath(pfad, arbeit).replace(os.sep, "/"))
-        except ValueError:
-            return False, f"{pfad} liegt nicht im Arbeitsordner der Webseite."
+            innen = os.path.relpath(pfad, arbeit)
+        except ValueError:      # anderes Laufwerk
+            innen = ".."
+        # relpath liefert für Pfade außerhalb klaglos "..\\woanders" - das
+        # würde erst viel später als unverständlicher Git-Fehler auffallen.
+        if innen.startswith(".."):
+            return False, (f"Die Datei liegt nicht im Git-Ordner mit den "
+                           f"Ergebnisdateien:\n{pfad}\nerwartet unterhalb "
+                           f"von\n{arbeit}")
+        relativ.append(innen.replace(os.sep, "/"))
     if not relativ:
         return False, "Es ist nichts zu veröffentlichen."
 
@@ -321,8 +353,13 @@ class LiveTiming:
     def aktiv(self):
         return self.einst.livetiming_an()
 
-    def aktualisieren(self, datenbank, datum=None, jetzt=None):
+    def aktualisieren(self, datenbank, datum=None, jetzt=None, hintergrund=None):
         """Schreibt ``livedata.json`` neu und veröffentlicht, wenn eingestellt.
+
+        ``hintergrund`` ist eine Funktion, die das Veröffentlichen anstößt,
+        ohne darauf zu warten. Die Oberfläche gibt sie mit, damit ein zäher
+        Push das Fenster nicht einfriert - Dateien schreiben geht immer
+        sofort, nur der Weg ins Netz braucht Geduld.
 
         Gibt eine kurze Meldung für die Statuszeile zurück ("" = aus).
         """
@@ -360,6 +397,12 @@ class LiveTiming:
         if self.letzter_push and wartezeit > 0:
             self.letzte_meldung = (f"Live-Timing: geschrieben, "
                                    f"Veröffentlichen in {int(wartezeit)} s")
+            return self.letzte_meldung
+
+        if hintergrund is not None:
+            hintergrund()
+            self.letzte_meldung = (f"Live-Timing: {anzahl} Ergebnisse "
+                                   f"geschrieben, wird veröffentlicht …")
             return self.letzte_meldung
 
         self.letzte_meldung = self.jetzt_veroeffentlichen(daten)

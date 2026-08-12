@@ -144,13 +144,17 @@ class Einstellungen:
     @classmethod
     def laden(cls, datei=STANDARD_DATEI):
         einst = cls(datei)
-        if os.path.isfile(datei):
+        if datei and os.path.isfile(datei):
             try:
                 with open(datei, encoding="utf-8") as f:
                     gelesen = json.load(f)
             except (OSError, ValueError):
                 gelesen = {}
-            for schluessel, wert in (gelesen or {}).items():
+            # Auch gültiges JSON kann das Falsche enthalten - eine Liste etwa.
+            # Dann gelten die Standardwerte, statt dass das Programm abstürzt.
+            if not isinstance(gelesen, dict):
+                gelesen = {}
+            for schluessel, wert in gelesen.items():
                 if schluessel in STANDARD:
                     einst._werte[schluessel] = _umwandeln(
                         TYPEN[schluessel], wert, STANDARD[schluessel])
@@ -158,6 +162,9 @@ class Einstellungen:
         return einst
 
     def speichern(self):
+        if not self.datei:
+            raise ValueError("Diese Einstellungen haben keine Datei, in die "
+                             "sie geschrieben werden könnten.")
         self.pruefen()
         ordner = os.path.dirname(os.path.abspath(self.datei))
         if ordner:
@@ -215,6 +222,14 @@ class Einstellungen:
         w["zwischenzeit_halten"] = max(1, int(w["zwischenzeit_halten"]))
         w["push_abstand_sekunden"] = max(0, int(w["push_abstand_sekunden"]))
         w["baudrate"] = max(50, int(w["baudrate"]))
+        # Ränder so begrenzen, dass die Karte auf einem A4-Blatt bleibt.
+        # Waagerecht: zwei Karten nebeneinander reichen bis linker Rand + 139 mm,
+        # das Blatt ist 210 mm breit.
+        # Senkrecht: die untere Linie liegt bei oberer Rand + 22 mm +
+        # unterem Abstand; 200 + 22 + 60 = 282 mm passen auf die 297 mm.
+        w["pr_linker_rand"] = max(0, min(60, int(w["pr_linker_rand"])))
+        w["pr_oberer_rand"] = max(0, min(200, int(w["pr_oberer_rand"])))
+        w["pr_unterer_abstand"] = max(0, min(60, int(w["pr_unterer_abstand"])))
         return self
 
     def klassen_liste(self):

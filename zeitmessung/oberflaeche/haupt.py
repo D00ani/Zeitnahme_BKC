@@ -11,13 +11,17 @@ Programm hatte an dieser Stelle eine Endlosschleife mit ``DoEvents``, die
 einen Prozessorkern dauerhaft ausgelastet und sich selbst verschachtelt
 aufgerufen hat.
 """
+import os
 import sqlite3
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .. import ablauf as ablauf_modul
+from .. import einstellungen as einstellungen_modul
 from .. import ausdruck, datenbank as db_modul, lichtschranke as ls_modul
-from .. import livetiming as lt_modul, wertung, zeit
+from .. import livetiming as lt_modul, selbsttest as selbsttest_modul
+from .. import sperre as sperre_modul, wertung, zeit
 from . import stil
 from .einstellungsfenster import Einstellungsfenster
 from .starterfenster import ENDE, ERFASSEN, LAUF1, Starterfenster
@@ -85,7 +89,20 @@ class Hauptfenster(tk.Tk):
         self.title("Zeitmessung")
         stil.grundeinstellung(self)
 
-        self.db = db_modul.Datenbank(str(self.einst.datenbank))
+        # Nur ein Programm je Datenbank - sonst schreiben zwei Fenster
+        # nebeneinander Ergebnisse, ohne voneinander zu wissen.
+        self.sperre = sperre_modul.Sperre(str(self.einst.datenbank))
+        if not self.sperre.setzen():
+            messagebox.showwarning(
+                "Zeitmessung läuft bereits",
+                f"Auf dieser Datenbank arbeitet schon ein anderes Fenster "
+                f"(Prozess {self.sperre.wer_haelt_sie() or '?'}).\n\n"
+                f"Dieses Fenster wird trotzdem geöffnet, speichert aber in "
+                f"dieselbe Datei. Am Renntag sollte nur EINE Zeitmessung "
+                f"laufen - das andere Fenster bitte schließen.",
+                parent=None)
+
+        self.db = self._datenbank_oeffnen()
         # Sicherungskopie bei jedem Start - wenn am Renntag etwas schiefgeht,
         # ist der Stand von vorhin noch da.
         try:
@@ -101,6 +118,8 @@ class Hauptfenster(tk.Tk):
         self._haltetext = ""
         self._gespeichert_lauf2 = False
         self._takt_id = None          # laufender Anzeigetakt, zum Abbestellen
+        self._beendet = False         # ab hier keine Signale mehr annehmen
+        self._push_laeuft = False     # es veröffentlicht immer nur einer
 
         self._baue()
         self.tafel = Anzeigetafel(self)
@@ -119,6 +138,33 @@ class Hauptfenster(tk.Tk):
     # ------------------------------------------------------------------
     # Aufbau
     # ------------------------------------------------------------------
+    def _datenbank_oeffnen(self):
+        """Öffnet die Datenbank - und wird verständlich, wenn das nicht geht.
+
+        Der häufigste Fall: die Datenbank liegt auf einem Stick oder einem
+        Netzlaufwerk, das gerade nicht da ist. Ohne diese Behandlung stünde
+        beim Start nur ein roher Systemfehler.
+        """
+        pfad = str(self.einst.datenbank)
+        try:
+            return db_modul.Datenbank(pfad)
+        except (OSError, sqlite3.Error) as fehler:
+            ausweich = os.path.join(einstellungen_modul.PROGRAMM_ORDNER,
+                                    "daten", "zeitmessung.db")
+            weiter = messagebox.askyesno(
+                "Datenbank nicht erreichbar",
+                f"Die eingestellte Datenbank lässt sich nicht öffnen:\n\n"
+                f"{pfad}\n{fehler}\n\n"
+                f"Liegt sie auf einem Stick oder Netzlaufwerk, das gerade "
+                f"nicht angeschlossen ist?\n\n"
+                f"Stattdessen die Datenbank neben dem Programm benutzen?\n"
+                f"{ausweich}",
+                parent=None)
+            if not weiter:
+                raise
+            self.einst.datenbank = ausweich
+            return db_modul.Datenbank(ausweich)
+
     def _neues_ergebnis(self):
         return wertung.Starterergebnis(
             sek_pylone=int(self.einst.strafzeit_pylone),
@@ -268,6 +314,9 @@ class Hauptfenster(tk.Tk):
         self.leiste = leiste
 
         hilfe = tk.Menu(leiste, tearoff=0)
+        hilfe.add_command(label="Selbsttest – ist alles bereit?",
+                          command=self._selbsttest)
+        hilfe.add_separator()
         hilfe.add_command(label="Kurzanleitung", command=self._hilfe)
         leiste.add_cascade(label="Hilfe", menu=hilfe)
         self.configure(menu=leiste)
@@ -305,8 +354,22 @@ class Hauptfenster(tk.Tk):
         self._schranke_zeichnen()
 
     def _signal_aus_faden(self, zeitstempel):
-        """Kommt aus dem Lesefaden - an den Fensterfaden weiterreichen."""
-        self.after(0, self._ausloesen)
+        """Kommt aus dem Lesefaden - an den Fensterfaden weiterreichen.
+
+        Beim Beenden kann ein Signal unterwegs sein, während Fenster und
+        Datenbank schon zugehen. Ohne diese Absicherung landet es auf einer
+        geschlossenen Datenbank und wirft einen Fehler, den niemand mehr
+        sieht.
+        """
+        if self._beendet:
+            return
+        try:
+            # Der Zeitstempel muss mitgereicht werden. Gestoppt wird der
+            # Moment der Durchfahrt, nicht der Moment, in dem das Fenster
+            # dazu kommt.
+            self.after(0, lambda t=zeitstempel: self._ausloesen(t))
+        except tk.TclError:
+            pass                       # Fenster ist bereits weg
 
     # ------------------------------------------------------------------
     # Bedienung
@@ -318,7 +381,9 @@ class Hauptfenster(tk.Tk):
         except tk.TclError:
             return False
 
-    def _ausloesen(self):
+    def _ausloesen(self, zeitpunkt=None):
+        if self._beendet:
+            return
         # Solange die Eingabe offen ist, darf kein Signal einen Lauf starten.
         # Sonst läuft im Hintergrund unbemerkt die Uhr, während vorne noch
         # Pylonen eingetragen werden - und die Zeit des nächsten Laufs ist
@@ -329,7 +394,7 @@ class Hauptfenster(tk.Tk):
                          "(„Weiter“).")
             self.bell()
             return
-        self._verarbeiten(self.ablauf.ausloesen())
+        self._verarbeiten(self.ablauf.ausloesen(zeitpunkt))
 
     def _abbrechen(self):
         if self._eingabe_offen():
@@ -517,19 +582,51 @@ class Hauptfenster(tk.Tk):
                     "Datei → Einstellungen → Live-Timing.", parent=self)
             self.var_live.set("Live-Timing: aus")
             return
-        meldung = self.live.aktualisieren(self.db)
+        meldung = self.live.aktualisieren(
+            self.db, hintergrund=self._veroeffentlichen_anstossen)
         self.var_live.set(meldung or "Live-Timing: aus")
         if laut and meldung:
+            self._status(meldung)
+
+    def _veroeffentlichen_anstossen(self):
+        """Schiebt den Push in einen eigenen Faden.
+
+        Git kann am Streckenrand zäh sein. Liefe es hier im Fenster, stünde
+        die ganze Zeitmessung so lange - und der nächste Fahrer wartet nicht,
+        bis GitHub geantwortet hat.
+        """
+        if self._push_laeuft or self._beendet:
+            return
+        self._push_laeuft = True
+
+        def arbeiten():
+            meldung = self.live.jetzt_veroeffentlichen()
+            self._push_laeuft = False
+            if self._beendet:
+                return
+            try:
+                self.after(0, lambda: self._push_fertig(meldung))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=arbeiten, daemon=True,
+                         name="Veroeffentlichen").start()
+
+    def _push_fertig(self, meldung):
+        self.var_live.set(meldung)
+        if "fehl" in meldung.lower() or "nicht" in meldung.lower():
             self._status(meldung)
 
     def _jetzt_veroeffentlichen(self):
         if not self.live.aktiv():
             self._live_aktualisieren(True)
             return
+        if self._push_laeuft:
+            self._status("Es wird gerade schon veröffentlicht.")
+            return
         self.live.aktualisieren(self.db)
-        meldung = self.live.jetzt_veroeffentlichen()
-        self.var_live.set(meldung)
-        self._status(meldung)
+        self.var_live.set("Live-Timing: wird veröffentlicht …")
+        self._veroeffentlichen_anstossen()
 
     # ------------------------------------------------------------------
     # Anzeige
@@ -701,6 +798,20 @@ class Hauptfenster(tk.Tk):
             parent=self)
         self._live_aktualisieren()
 
+    def _selbsttest(self):
+        """Vor dem Renntag einmal alles durchklingeln."""
+        self._status("Selbsttest läuft …")
+        self.update_idletasks()
+        bericht = selbsttest_modul.alles_pruefen(
+            self.einst, self.db,
+            lichtschranke_offen=bool(self.lichtschranke
+                                     and self.lichtschranke.offen),
+            sicherungspfad=self.sicherung)
+        self._status(bericht.zusammenfassung())
+        anzeigen = messagebox.showerror if bericht.fehler else messagebox.showinfo
+        anzeigen("Selbsttest", bericht.als_text(), parent=self)
+        return bericht
+
     def _hilfe(self):
         messagebox.showinfo("Kurzanleitung", KURZANLEITUNG, parent=self)
 
@@ -715,11 +826,17 @@ class Hauptfenster(tk.Tk):
         if self.lichtschranke:
             self.lichtschranke.schliessen()
         self.db.schliessen()
+        self.sperre.loesen()
         self.destroy()
 
     def destroy(self):
         """Beim Schließen den Anzeigetakt abbestellen - sonst versucht
         tkinter, ihn auf einem nicht mehr vorhandenen Fenster auszuführen."""
+        self._beendet = True
+        if self.lichtschranke:
+            # zuerst den Lesefaden anhalten, dann erst abbauen
+            self.lichtschranke.schliessen()
+            self.lichtschranke = None
         if self._takt_id is not None:
             try:
                 self.after_cancel(self._takt_id)

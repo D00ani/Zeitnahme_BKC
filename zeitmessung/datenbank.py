@@ -162,18 +162,26 @@ class Datenbank:
         return [dict(z) for z in reversed(zeilen)]
 
     def naechste_startnummer(self, datum=None):
-        """Die um eins erhöhte zuletzt vergebene Startnummer des Tages.
-        Nicht-numerische Startnummern werden übersprungen, statt - wie früher -
-        das Programm in den Fehlerzweig laufen zu lassen."""
+        """Die **höchste** bisher vergebene Startnummer des Tages plus eins.
+
+        Bewusst das Maximum und nicht die zuletzt eingetragene Nummer: Fährt
+        Starter 3 seinen Lauf noch einmal, ist er der jüngste Datensatz -
+        vorgeschlagen würde dann die 4, die längst vergeben ist. Genau diesen
+        Fehler hatte auch das alte Programm.
+
+        Nicht-numerische Startnummern werden übersprungen, statt das
+        Programm in den Fehlerzweig laufen zu lassen.
+        """
         datum = datum or heute()
         zeilen = self.verbindung.execute(
-            "SELECT starternr FROM laufergebnisse WHERE datum = ? ORDER BY id DESC",
+            "SELECT starternr FROM laufergebnisse WHERE datum = ?",
             (datum,)).fetchall()
+        hoechste = 0
         for zeile in zeilen:
             text = (zeile["starternr"] or "").strip()
             if text.isdigit():
-                return str(int(text) + 1)
-        return "1"
+                hoechste = max(hoechste, int(text))
+        return str(hoechste + 1)
 
     def loesche_tag(self, datum):
         """Nur für Aufräumarbeiten und Tests."""

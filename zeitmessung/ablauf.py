@@ -51,6 +51,7 @@ class Ablauf:
         self._gesamt_start = None       # Beginn des Laufs bzw. des Trainings
         self._letzter_ausloeser = None  # für die Sperrzeit
         self._letzte_zeit = 0           # zuletzt angezeigte/gestoppte Zeit
+        self._restzeit = int(einstellungen.tr_max_zeit)  # Anzeige im Training
 
     # ------------------------------------------------------------------
     # Abfragen
@@ -69,11 +70,17 @@ class Ablauf:
         return zeit.aus_sekunden(self.uhr() - self._lauf_start)
 
     def training_restzeit_minuten(self):
-        """Verbleibende Trainingsminuten (kann 0 werden, nie negativ)."""
-        if self._gesamt_start is None:
-            return int(self.einst.tr_max_zeit)
+        """Verbleibende Trainingsminuten (kann 0 werden, nie negativ).
+
+        Läuft gerade nichts, bleibt der zuletzt gültige Wert stehen. Sonst
+        würde die Anzeige nach dem Ende des Trainings munter weiterzählen und
+        beim nächsten Blick eine Restzeit zeigen, die zu nichts gehört.
+        """
+        if not self.laeuft or self._gesamt_start is None:
+            return self._restzeit
         verbraucht = (self.uhr() - self._gesamt_start) / 60.0
-        return max(0, int(self.einst.tr_max_zeit) - int(verbraucht))
+        self._restzeit = max(0, int(self.einst.tr_max_zeit) - int(verbraucht))
+        return self._restzeit
 
     def training_zeit_abgelaufen(self):
         if self._gesamt_start is None:
@@ -139,9 +146,19 @@ class Ablauf:
             self.einfuehrung_zaehler = int(self.einst.we_einfuehrungsrunden)
         return [Ereignis("abbruch", {"text": text})]
 
-    def ausloesen(self):
-        """Ein Signal der Lichtschranke oder ein Druck auf F1."""
-        jetzt = self.uhr()
+    def ausloesen(self, zeitpunkt=None):
+        """Ein Signal der Lichtschranke oder ein Druck auf F1.
+
+        ``zeitpunkt`` ist der Moment, in dem das Signal **eingetroffen** ist.
+        Die Lichtschranke nimmt ihn schon im Lesefaden, bevor die Oberfläche
+        überhaupt davon erfährt. Ohne diese Übergabe würde die Zeit erst dann
+        gestoppt, wenn das Fenster dazu kommt - und wenn es gerade beschäftigt
+        ist (Drucken, Veröffentlichen), wäre die Zeit um genau diese
+        Verzögerung falsch.
+
+        Ohne Angabe gilt der Aufrufmoment - so wie beim Druck auf F1.
+        """
+        jetzt = self.uhr() if zeitpunkt is None else float(zeitpunkt)
         if self.laeuft and self._gesperrt(jetzt):
             return [Ereignis("gesperrt", {})]
         self._letzter_ausloeser = jetzt
@@ -166,6 +183,7 @@ class Ablauf:
             self.runden = 0
             self._lauf_start = jetzt
             self._gesamt_start = jetzt
+            self._restzeit = int(self.einst.tr_max_zeit)
             return [Ereignis("protokoll", {"text": "Start Training"}),
                     Ereignis("start", {"modus": TRAINING})]
 

@@ -27,6 +27,28 @@ SCHRIFT_ZEIT = ("Verdana", 14, True)
 KARTEN_BREITE = 70      # mm, wie im Original
 KARTEN_ABSTAND = 2      # mm zwischen den beiden Karten
 
+# Grobe mittlere Zeichenbreite als Anteil der Schriftgröße. Verdana und
+# Helvetica liegen beide in dieser Gegend. Es geht nur darum, überlange
+# Namen zu erkennen - auf ein Zehntelmillimeter kommt es dabei nicht an.
+_ZEICHENBREITE = 0.55
+
+
+def _passt_in(text, breite_mm, punkte):
+    """Kürzt Text, der über die Karte hinauslaufen würde.
+
+    Ein Name wie „Maximiliane von Und-Zu-Hohenzollern-Sigmaringen“ wäre
+    rund 90 mm breit - er würde quer über die zweite Karte laufen, die schon
+    bei 82 mm beginnt.
+    """
+    je_zeichen = punkte * _ZEICHENBREITE * 25.4 / 72
+    if je_zeichen <= 0:
+        return text
+    passt = int(breite_mm / je_zeichen)
+    text = str(text)
+    if len(text) <= passt:
+        return text
+    return text[:max(1, passt - 1)].rstrip() + "…"
+
 
 def bauplan(ergebnis, linker_rand=10, oberer_rand=10, unterer_abstand=20,
             karten=2):
@@ -61,12 +83,15 @@ def bauplan(ergebnis, linker_rand=10, oberer_rand=10, unterer_abstand=20,
         y2 = y + 22         # 2. Lauf
         ye = y2 + unterer_abstand
 
-        # Kopf
+        # Kopf. Klasse und Name werden auf die Kartenbreite beschnitten,
+        # damit nichts in die Nachbarkarte läuft.
         anweisungen.append(("text", x, y, SCHRIFT_NORMAL,
-                            f"Klasse {ergebnis.klasse}"))
+                            _passt_in(f"Klasse {ergebnis.klasse}",
+                                      x1 - x - 2, SCHRIFT_NORMAL[1])))
         anweisungen.append(("text", x1, y, SCHRIFT_ZEIT, gesamt["gesamtzeit"]))
         anweisungen.append(("text", x, y + 6, SCHRIFT_FETT,
-                            f"{ergebnis.name} ({ergebnis.startnummer})"))
+                            _passt_in(f"{ergebnis.name} ({ergebnis.startnummer})",
+                                      breite - 3, SCHRIFT_FETT[1])))
         anweisungen.append(("linie", x, y + 12, breite + x - 3, y + 12, 0.5))
 
         # Tabellenkopf
@@ -158,8 +183,10 @@ def drucker_liste():
 
 def _dateiname(ergebnis, zeitstempel=None):
     zeitstempel = zeitstempel or datetime.now()
-    nummer = str(ergebnis.startnummer or "ohne").strip() or "ohne"
-    sauber = "".join(z for z in nummer if z.isalnum() or z in "-_")
+    nummer = str(ergebnis.startnummer or "").strip()
+    # Aus der Startnummer wird ein Dateiname - Schrägstriche und Ähnliches
+    # müssen weg, und übrig bleiben darf nicht nichts.
+    sauber = "".join(z for z in nummer if z.isalnum() or z in "-_") or "ohne"
     return f"Ergebniskarte_{sauber}_{zeitstempel:%Y-%m-%d_%H-%M-%S}.pdf"
 
 

@@ -137,6 +137,27 @@ Signale stehen im Verlauf, man sieht also hinterher, dass eines kam.
 > ausgeschaltet bleiben. Sie stört den USB-Adapter und führt zu falschen
 > Zeiten.
 
+### Vor dem Renntag: Selbsttest
+
+**Hilfe → Selbsttest – ist alles bereit?**
+
+Klingelt in zehn Sekunden alles durch und sagt bei jedem Punkt, was zu tun
+ist, wenn er nicht stimmt:
+
+```
+[OK] Datenbank: beschreibbar, 3 Renntag(e) gespeichert
+[OK] Sicherung: beim Start angelegt (44 kB)
+[OK] Klassen und Vereine: 10 Klassen, 6 Vereine
+[X]  Lichtschranke: COM6 ist nicht da
+       -> Stecker prüfen. Gefunden wurde: COM3, COM4
+[!]  Ausdruck: steht auf PDF-Vorschau
+       -> Es wird kein Papier bedruckt. Für den Renntag den Haken entfernen.
+[OK] Live-Timing: eingeschaltet, veröffentlicht
+[OK] Verbindung zur Webseite: GitHub erreichbar
+```
+
+`X` muss vor dem Rennen erledigt werden, `!` ist ein Hinweis.
+
 ### Wenn etwas schiefgegangen ist
 
 **Ergebnisse → Ergebnisse heute …** zeigt alle Datensätze des Tages.
@@ -222,6 +243,15 @@ Beides sind schlichte Dateien – zum Sichern einfach kopieren.
 | Druckerfehler hielt das Programm mit `Stop` an | Hinweis, Weiterarbeiten möglich |
 | Nach Abbruch eines Wertungslaufs galt der nächste Auslöser als Einführungsrunde | startet den Lauf neu |
 | Ein Signal während der Eingabe startete unbemerkt den nächsten Lauf | wird ignoriert und protokolliert |
+| Der Zeitstempel der Lichtschranke wurde verworfen – gestoppt wurde, wann das Fenster dazu kam | der Moment der Durchfahrt zählt |
+| Ein zäher `git push` fror die ganze Zeitmessung ein | läuft im Hintergrund, mit Zeitgrenze |
+| Startnummernvorschlag kollidierte nach einem wiederholten Lauf | höchste vergebene Nummer plus eins |
+| Berichtigen rechnete das Gesamtergebnis aus einem fehlenden Lauf | wird nur bei vollständigen Läufen angepasst |
+| Zwei Programme konnten dieselbe Datenbank beschreiben | Dateisperre, löst sich auch nach einem Absturz |
+| Lange Namen liefen quer über die zweite Karte | werden auf die Kartenbreite gekürzt |
+| Zu große Druckränder schoben die Karte vom Blatt | werden auf A4 begrenzt |
+| Eine kaputte Einstellungsdatei riss das Programm um | Standardwerte greifen |
+| Unerreichbare Datenbank ergab einen rohen Systemfehler | verständliche Rückfrage mit Ausweichpfad |
 | Eine falsche Pylonenzahl ließ sich nur direkt in Access berichtigen | „Ergebnisse heute“ im Programm |
 | Keine Sicherung der Daten | Kopie bei jedem Programmstart |
 
@@ -239,7 +269,7 @@ oder von Hand:
 python -m unittest discover -s tests -t .
 ```
 
-202 Tests: Zeitarithmetik, Strafzeiten, Platzierung, kompletter Rennablauf
+256 Tests: Zeitarithmetik, Strafzeiten, Platzierung, kompletter Rennablauf
 mit gestellter Uhr, Datenbank, Berichtigen und Sichern, Altdaten-Import,
 Druck-Layout, PDF-Vorschau, Live-Timing – und die Bedienung im echten
 Fenster: Zustandsbalken, Lichtschranken-Anzeige und der Schutz gegen
@@ -255,6 +285,8 @@ zeitmessung\
   ablauf.py                  Training/Einführung/Wertung als reine Logik
   wertung.py                 Strafzeiten, Summen, Platzierung
   livetiming.py              livedata.json, Archiv, Veröffentlichen
+  sperre.py                  nur ein Programm je Datenbank
+  selbsttest.py              Prüfung vor dem Renntag
 
   ausdruck.py                Layout der Ergebniskarte, wählt den Druckweg
   ausdruck_pdf.py              als PDF – auf jedem System gleich
